@@ -1,0 +1,417 @@
+---
+title: "Activity Monitoring Data Analysis"
+author: "Michael Kamfonas"
+date: "October 8, 2015"
+output: html_document
+keep_md: true
+---
+# Overview
+
+This is the first assigned project towards completion of the Coursera "Reproducible Research" - October 2015. 
+
+According to the assignent page:
+
+<em>"This assignment makes use of data from a personal activity monitoring device. This device collects data at 5 minute intervals through out the day. The data consists of two months of data from an anonymous individual collected during the months of October and November, 2012 and include the number of steps taken in 5 minute intervals each day."
+</em>
+
+# The Data
+
+The Activity monitoring dataset includes 17,568 observations and is in a csv format downloaded from URL:
+http://d396qusza40orc.cloudfront.net/repdata%2Fdata%2Factivity.zip 
+
+There are three column variables whose definitions are repeated below:
+
+* **steps:** Number of steps taking in a 5-minute interval (missing values are coded as NA)
+
+
+* **date:** The date on which the measurement was taken in YYYY-MM-DD format
+
+
+* **interval:** Identifier for the 5-minute interval in which measurement was taken. The identifier is an integer formed by concatenating the 24-hour with a two-digit minute marking the beginning of the time interval 
+
+Here are a summary of the raw data:
+
+```{r cache=TRUE}
+setwd("D:/Coursera/work/R5-ReproducibleResearch/Project1")
+raw.data <- read.csv("data/activity.csv")
+summary(raw.data)
+```
+
+We add a real date to make date manipulation easier. We could replace the existing date but since we are using *xtable* we chose to retain the character version of the date. After adding the day of week to understand weekly paterns of observations, the data frame "data" looks like this...
+
+```{r cache=FALSE}
+dow<-c("Sunday","Monday","Tuesday","Wednesday","Friday","Saturday")
+data<-raw.data
+data$dt<-as.Date(raw.data$date)
+data$day<-weekdays(data$dt)
+data$weekend<-data$day %in% c("Saturday","Sunday")
+tail(head(data,1444))
+```
+... and a few more rows with non-zero step values:
+```{r}
+tail(head(data,1544))
+```
+
+Summarizing by day we can look at the count and range of intervals, and find out count observations (how many are non-NA and how many are more than Zero)  
+
+```{r echo=FALSE, warning=FALSE,message=FALSE}
+library(dplyr)
+#library(pdflatex)
+```
+```{r cache=TRUE}
+s1<- data %>% 
+  group_by(date,day,dt) %>% 
+  summarize(from.interval=min(interval),
+            to.interval=max(interval),
+            count=sum(interval==interval),
+            valid.observations=sum(!is.na(steps)),
+            nonZero.observations=sum(steps>0,na.rm=TRUE)) 
+```
+```{r eval=FALSE,echo=FALSE}
+library(pander)
+pander(s1)
+```
+```{r results='asis'}
+library(xtable)
+print(xtable(s1),type = "html")
+```
+
+From this summary we can see that:
+
+* A few days have all their observations NA
+* If a day has valid observations, it has all 288 of them
+
+
+# Number of Steps per Day
+## Exploring Daily Step Count
+
+Grouping the observations by day and summing step counts provides the basis for analyzing daily step counts. a summary of the step count calculates the mean and median for us, 10770 and 10760 respectively. This is surprisingly close, indicating no skew, given the rather wide standard deviation which is 4269 steps/day. 
+ 
+```{r}
+s2 <- data %>% 
+  group_by(date,day) %>% 
+  summarize(valid.observations=sum(!is.na(steps)),
+            nonZero.observations=sum(steps>0,na.rm=TRUE),
+            step.count = sum(steps)) %>%
+  mutate(group = "original")
+s2$seq <- 1:nrow(s2)
+  
+
+summary(s2$step.count)
+sd(s2$step.count,na.rm=TRUE)
+```
+
+The plot below shows daily step count for each day of observation but it also distinguishes and connects points of the same day of the week. The average is marked by a horizontal line. Days with no observations are shown as having no steps but are excluded from the calculation of the mean. 
+
+```{r echo=FALSE}
+cols<-rainbow(7)
+plotchar <- 18:24
+linetype <- 1:7
+plot(c(0,80),c(0,22000),type="n",
+     yla="Daily Step Count", 
+     xla="Days of observation",
+     col=cols[as.integer(factor(s2$day))],
+     pch=plotchar[as.integer(factor(s2$day))],
+     lty=linetype[as.integer(factor(s2$day))])
+for (i in 1:7) { 
+   lines(s2[s2$day==dow[i],]$seq,
+     s2[s2$day==dow[i],]$step.count, 
+         type="b", lwd=1.5,
+     lty=linetype[i], col=cols[i], pch=plotchar[i]) 
+ } 
+
+abline(h=mean(s2$step.count,na.rm=TRUE))
+legend("right", legend=dow, cex=0.8, col=cols,
+    pch=plotchar, lty=linetype, title="Day of Week")
+
+```
+
+## Frequency Histogram
+
+The histogram below shows the frequency distribution of the daily step count along with a normal desnity curve of the same mean and standard deviation of the observations.
+
+```{r echo=FALSE}
+h<-hist(s2$step.count,breaks=10)
+abline(v=mean(s2$step.count,na.rm=TRUE),col="red")
+xfit<-seq(min(s2$step.count,na.rm=TRUE),max(s2$step.count,na.rm=TRUE),length=50)
+yfit<-dnorm(xfit,mean=mean(s2$step.count,na.rm=TRUE),sd=sd(s2$step.count,na.rm=TRUE)) 
+yfit <- yfit*diff(h$mids[1:2])*length(s2$step.count) 
+lines(xfit, yfit, col="blue", lwd=2)
+
+```
+
+# Average Daily Activity Pattern
+## Data Preparation and Highest Daily Activity Time
+
+This analysis groups the data by time-of-day (5-min interval) and averages step counts across all days for each interval in a separate row. Using this result we see that the point with the highest average step count is 206 steps per 5-minutes on the interval that begins at 8:35.
+
+```{r}
+s3 <- data %>% 
+  group_by(interval) %>%
+  summarize(avg.step.count=mean(steps,na.rm=TRUE),
+            sd.step.count=sd(steps,na.rm=TRUE),
+            min.step.count=min(steps,na.rm=TRUE),
+            max.step.count=max(steps,na.rm=TRUE),
+            median.step.count=median(steps,na.rm=TRUE))
+
+# Calculate point of highest activity
+max.avg.step.count <- max(s3$avg.step.count)
+peak.interval<- s3[s3$avg.step.count==max.avg.step.count,]$interval
+c(MaxAvgStepCount=max.avg.step.count,PeakInterval=peak.interval)
+```
+As we saw when we explored the original data, the likelihood of the subnect not moving at a particular interval of the day skews the median to be close or on zero. Here is a histogram showing the discrepancies between mean and median. 
+```{r}
+# Check skew: mean-median
+skew <- s3$avg.step.count -s3$median.step.count
+summary(skew)
+```
+```{r echo=FALSE}
+hist(skew,breaks = 20)
+```
+
+
+## Daily Activity Time-Series Plot
+
+In the time series plot below, the X-axis depicts the 24-hour time-scale and the Y axis shows the average steps per day observed for each interval. The dotted line represents the median number of steps per day. Since it is likely that at a particular point in time our subject may not be moving, it is not surprising that for the majority of time intervals the median is zero.
+
+```{r echo=FALSE}
+library(ggplot2)
+gg <- ggplot() + 
+  geom_line(aes(interval, 
+                avg.step.count),
+            data=s3) +
+  geom_line(aes(interval, 
+                avg.step.count),
+            data=s3) +
+
+  geom_line(aes(interval, 
+                median.step.count),
+                linetype="dashed",
+            data=s3) +
+
+    scale_x_continuous("Hour of the Day", 
+                     breaks=0:24*100,labels=0:24) +
+  ylab("Daily step-count") +
+  
+  geom_vline(xintercept=peak.interval,color="red") +
+
+  ggtitle("Average steps by Time of Day\n(observed in 5-min Intervals)")
+  
+gg
+
+```
+
+By adding various shaded area ribbons to indicate the variability among days, the same graph turns out like the following with these measurements shown:
+
+* A black line denoting the average steps per 5-min interval across the days with observations, and a dashed line denoting the median as before.
+* The darker, narrower shaded area shows a band of one standard deviation to quantify the variability observed from day-to-day for that interval 
+* The midle-gray tone is two standard deviations wide
+* The lighter gray area is the total range observed for each interval.
+* The vertical red line, indicates the time where most steps are observed per day. 
+
+
+```{r eval=FALSE,echo=FALSE}
+ts3<-ts(s3$avg.step.count)
+plot.ts(ts3)
+
+
+```
+```{r echo=FALSE}
+library(ggplot2)
+gg <- ggplot() + 
+  geom_line(aes(interval, avg.step.count),data=s3) +
+ geom_ribbon(aes(x=interval,
+                  ymin=  max(0,min.step.count),
+                  ymax=  max.step.count,
+                  fill="Range Observed"),
+              data=s3) +
+ geom_ribbon(aes(x=interval,
+                  ymin=  max(0,avg.step.count-2*sd.step.count),
+                  ymax=  avg.step.count+2*sd.step.count,
+                  fill="Two std devs"),
+              data=s3) +
+  geom_ribbon(aes(x=interval,
+                  ymin=max(0,avg.step.count-sd.step.count),
+                  ymax=avg.step.count+sd.step.count,
+                  fill="One std dev"),
+              data=s3) +
+  geom_line(aes(interval, 
+                avg.step.count),
+            data=s3) +
+
+  geom_line(aes(interval, 
+                median.step.count),
+                linetype="dashed",
+            data=s3) +
+
+    scale_x_continuous("Hour of the Day", 
+                     breaks=0:24*100,labels=0:24) +
+  ylab("Daily step-count") +
+  
+  geom_vline(xintercept=peak.interval,color="red") +
+
+    scale_fill_manual(values=c("grey70","grey85","grey80"),
+                    name="Shaded Areas Represent:") +
+  ggtitle("Average steps by Time of Day\n(observed in 5-min Intervals)") +
+  theme(legend.position="bottom")
+  
+gg
+
+```
+
+# Imputing Missing Values
+
+## Explore Missing Values
+As we discovered during the original data exploration, missing values come in whole days. There are no days with some itervals having values and some not. 
+
+Here is a summary of the 8 days (288 intervals each) with the missing observations:
+
+```{r results='asis', echo=FALSE}
+print(xtable(s1[s1$valid.observations<288,],
+             caption="Days with missing or no observations"),
+      type = "html")
+```
+
+## Imputing Strategy
+
+* The missing observations come from a variety of weekdays and weekends
+* They are scattered through the two months with only one pair (11/9 and 11/10) of contiguous days missed.
+
+Based on this, we will impute values by picking the closest same day of the week that is not imputed and has not been used for imputing another day's values. 
+
+## Imputed Step-Counts
+
+We add a new column to the data called impSteps that contains the same non-NA values as the steps varable, and the imputed values from the appropriate date for the NA values. The following code applies these rules to derive a vector for the imputed dates and a corresponding vector of dates to copy imputed values from. Then it updates the impSteps variable as described.
+```{r}
+missedDays <- s1[s1$valid.observations<288,]$dt
+impDays <- missedDays + 7
+impDays[1] <- impDays[1]+7
+impDays[2] <- impDays[2]+7
+impDays[8] <- missedDays[8]-7
+missedDays
+impDays
+
+data$impSteps <- data$steps
+data$impSteps[data$dt %in% missedDays]<-data$steps[data$dt %in% impDays]
+ summary(data)
+```
+
+## Reexploring Daily Step Count
+
+We combine the original group s2 to a new group s2a that repeats the same data with NAs replaced by imputed values. The combined data frame s2i, has a group column that distinguishes the "original" from the "imputed" data.
+
+TGrouping the observations by day and summing step counts provides the basis for analyzing daily step counts. a summary of the step count calculates the mean and median for us, 10770 and 10760 respectively. This is surprisingly close, indicating no skew, given the rather wide standard deviation which is 4269 steps/day. 
+ 
+```{r}
+s2a <- data %>% 
+  group_by(date,day) %>% 
+  summarize(valid.observations=sum(impSteps),
+            nonZero.observations=sum(impSteps>0,na.rm=TRUE),
+            step.count = sum(impSteps)) %>%
+  mutate(group = "imputed")
+s2a$seq <- 1:nrow(s2a)
+
+s2i <- rbind(s2,s2a)
+  
+
+summary(s2a$step.count)
+meanImp <- mean(s2a$step.count,na.rm=TRUE)
+sdImp   <- sd(s2a$step.count,na.rm=TRUE)
+c(mean=meanImp,sd=sdImp)
+meanOrig <- mean(s2$step.count,na.rm=TRUE)
+sdOrig   <- sd(s2$step.count,na.rm=TRUE)
+c(mean=meanOrig,sd=sdOrig)
+```
+We repeat the original data summary for comparison: 
+```{r}
+summary(s2$step.count)
+```
+
+The plot below shows daily step count for each day of observation but it also distinguishes and connects points of the same day of the week. The average is marked by a horizontal line. Days with no observations are shown as having no steps but are excluded from the calculation of the mean. 
+
+```{r echo=FALSE}
+cols<-rainbow(7)
+plotchar <- 18:24
+linetype <- 1:7
+plot(c(0,80),c(0,22000),type="n",
+     yla="Daily Step Count", 
+     xla="Days of observation",
+     col=cols[as.integer(factor(s2a$day))],
+     pch=plotchar[as.integer(factor(s2a$day))],
+     lty=linetype[as.integer(factor(s2a$day))])
+for (i in 1:7) { 
+   lines(s2a[s2a$day==dow[i],]$seq,
+     s2a[s2a$day==dow[i],]$step.count, 
+         type="b", lwd=1.5,
+     lty=linetype[i], col=cols[i], pch=plotchar[i]) 
+ } 
+
+abline(h=mean(s2a$step.count,na.rm=TRUE))
+legend("right", legend=dow, cex=0.8, col=cols,
+    pch=plotchar, lty=linetype, title="Day of Week")
+
+```
+
+## Comperative Density Histogram
+
+The density histogram below shows daily step counts of imputed (green) vs. original (red) data, along with the two corresponding contiuous density curves (dashed lines). Normal density functions with the imputed and original means and standard deviations are also shown with coninuoous lines. Our selected method of imputing missing values appears to have a small effect on the count distributions. 
+
+```{r echo=FALSE}
+gg <- ggplot(data=s2i,aes(x=s2i$step.count, fill=s2i$group)) + 
+  geom_histogram(aes(y=..density..),alpha=0.4, position=position_dodge(),binwidth=1000,na.rm=TRUE) +
+  xlab("Daily Step Count") +
+  ylab("frequency (day count)") +
+  stat_function(color="red",fun=dnorm,args=list(mean=meanOrig,sd=sdOrig)) +
+  stat_function(color="darkgreen",fun=dnorm,args=list(mean=meanImp,sd=sdImp))
+
+gg <- gg +  stat_density (aes(line=s2i$group),geom="line",linetype="dashed",position="identity",na.rm=TRUE) 
+gg
+```
+# Are there differences in activity patterns between weekdays and weekends?
+
+We separate the original data into weekend and weekday groups and group by interval. The two sets of mean, median and interval where the max mean occurs are shown for two subsets depending on whether weekend=TRUE of FALSE
+
+The rest of the manipulations prepare the data for the ggplot timeseries. 
+```{r}
+s4 <- data %>% 
+  group_by(interval,weekend) %>%
+  summarize(avg.step.count=mean(steps,na.rm=TRUE),
+            sd.step.count=sd(steps,na.rm=TRUE),
+            min.step.count=min(steps,na.rm=TRUE),
+            max.step.count=max(steps,na.rm=TRUE),
+            median.step.count=median(steps,na.rm=TRUE)) %>%
+  mutate(weekend=factor(ifelse(weekend,"Weekend","Weekday"))) 
+
+
+Sts <- lapply(split(s4,s4$weekend),function(x){
+c(MaxSteps=max(x$avg.step.count),at.Interval=x$interval[which.max(x$avg.step.count)])
+})
+
+Sts
+
+peak.intervals <- data.frame(
+  weekend = levels(s4$weekend),
+  intercept=c(Sts[[1]][2],Sts[[2]][2]))
+
+row.names(peak.intervals)<-c("Weekend","Weekday")
+names(peak.intervals)[1] <- "weekend"
+
+
+gg <- ggplot() + 
+  geom_line(aes(interval, 
+                avg.step.count,color=weekend),
+            data=s4) +
+  scale_x_continuous("Hour of the Day", 
+                     breaks=0:24*100,labels=0:24) +
+  ylab("Daily step-count") +
+  ggtitle("Average steps by Time of Day\n(observed in 5-min Intervals)") +
+  geom_vline(aes(xintercept=intercept),data=peak.intervals)
+  
+gg + facet_grid(weekend~.) +   
+  theme(legend.position="bottom") +
+  scale_color_discrete(name="")
+```
+
+The vertical line shows the time with the highest number of average steps. This time occurs about 45 minutes later in weekends than in week days. 
+
+
